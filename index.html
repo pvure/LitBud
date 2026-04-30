@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Papers</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Paper navigation">
+        <div class="sidebar-top">
+          <h1>Papers</h1>
+          <button id="newPaperBtn" class="button primary compact" type="button">Add</button>
+        </div>
+
+        <label class="field-label" for="searchInput">Search</label>
+        <input id="searchInput" class="text-input" type="search" placeholder="Title, author, tag" />
+
+        <div class="sidebar-section">
+          <div class="section-title">Categories</div>
+          <div id="categoryFilters" class="chip-list"></div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="section-title">Library</div>
+          <div id="paperList" class="paper-list" aria-live="polite"></div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <div id="dropNotice" class="drop-notice hidden" aria-live="polite">
+          Drop PDFs to add them to the reading queue.
+        </div>
+
+        <section id="emptyState" class="empty-state">
+          <div class="empty-visual" aria-hidden="true">
+            <div class="paper-page page-back"></div>
+            <div class="paper-page page-front">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+          <h2>Build a queue, then read with notes beside the PDF.</h2>
+          <p>Drop PDFs here. Title and author fields are filled from embedded PDF metadata when available.</p>
+          <button class="button primary" type="button" data-open-add>Add a paper</button>
+        </section>
+
+        <section id="reader" class="reader hidden">
+          <div class="reader-layout">
+            <section class="pdf-pane" aria-label="PDF viewer">
+              <div class="pane-header">
+                <h3>PDF</h3>
+                <div class="pane-actions">
+                  <label class="button secondary compact" for="pdfInput">Attach</label>
+                  <input id="pdfInput" class="hidden-input" type="file" accept="application/pdf" />
+                  <a id="openPdfLink" class="button secondary compact hidden" target="_blank" rel="noreferrer">Open</a>
+                  <button id="deleteBtn" class="button danger compact" type="button">Delete</button>
+                </div>
+              </div>
+              <div id="pdfViewer" class="pdf-viewer">
+                <div class="pdf-placeholder">
+                  <strong>No PDF attached.</strong>
+                  <span>Attach a file to keep the paper and its note document together.</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="notes-pane" aria-label="Linked notes">
+              <div class="pane-header">
+                <h3>Linked notes</h3>
+                <span id="saveState" class="save-state">Saved</span>
+              </div>
+
+              <label class="stacked-field">
+                <span>Categories</span>
+                <input id="categoriesInput" class="text-input" placeholder="methods, CRISPR, single-cell" />
+              </label>
+
+              <label class="stacked-field">
+                <span>Tags</span>
+                <input id="tagsInput" class="text-input" placeholder="benchmark, useful-figure, discuss-with-PI" />
+              </label>
+
+              <label class="stacked-field">
+                <span>Core question</span>
+                <textarea id="questionInput" class="textarea short" placeholder="What problem does this paper solve?"></textarea>
+              </label>
+
+              <label class="stacked-field">
+                <span>Notes while reading</span>
+                <textarea id="notesInput" class="textarea tall" placeholder="Write page-linked thoughts, caveats, and ideas here. Example: p. 4 - Their ablation misses..."></textarea>
+              </label>
+
+              <label class="stacked-field">
+                <span>Highlights and quotes to revisit</span>
+                <textarea id="highlightsInput" class="textarea medium" placeholder="Paste short excerpts or describe PDF highlights with page numbers."></textarea>
+              </label>
+
+              <label class="stacked-field">
+                <span>After-reading synthesis</span>
+                <textarea id="takeawaysInput" class="textarea medium" placeholder="What should future-you remember? What methods, citations, or questions matter?"></textarea>
+              </label>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="paperDialog" class="dialog">
+      <form id="paperForm" method="dialog">
+        <div class="dialog-header">
+          <h2 id="dialogTitle">Add paper</h2>
+          <button class="icon-button" value="cancel" type="button" data-close-dialog aria-label="Close">x</button>
+        </div>
+        <div class="form-grid">
+          <label id="formPdfField" class="pdf-field">
+            <span>PDF</span>
+            <input id="formPdf" class="file-input" type="file" accept="application/pdf" multiple />
+          </label>
+          <label>
+            <span>Title</span>
+            <input id="formTitle" class="text-input" placeholder="Optional if attaching a PDF" />
+          </label>
+          <label>
+            <span>Authors</span>
+            <input id="formAuthors" class="text-input" placeholder="Author A, Author B" />
+          </label>
+        </div>
+        <div id="formMetadataStatus" class="metadata-status" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button class="button secondary" type="button" data-close-dialog>Cancel</button>
+          <button id="formSubmitBtn" class="button primary" type="submit">Add</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>
