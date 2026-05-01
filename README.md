@@ -39,6 +39,24 @@ To rebuild the double-clickable macOS app:
 npm run pack:mac
 ```
 
+To build a Windows x64 folder for sharing:
+
+```bash
+npm run pack:win
+```
+
+Then zip and send:
+
+```text
+dist/win-unpacked/
+```
+
+The Windows executable is:
+
+```text
+dist/win-unpacked/Papers.exe
+```
+
 The old browser-only mode still works by opening `index.html`, but browser-only mode stores data in browser storage unless you use Chrome/Edge folder mode.
 
 ## Local server storage

@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "desktop": "electron .",
-    "pack:mac": "electron-builder --mac dir"
+    "pack:mac": "electron-builder --mac dir",
+    "pack:win": "electron-builder --win dir --x64"
   },
   "build": {
     "appId": "dev.litbud.papers",
@@ -25,6 +26,11 @@
         "dir"
       ],
       "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "dir"
+      ]
     }
   },
   "dependencies": {
