@@ -2,6 +2,9 @@ const STORAGE_KEY = "litbud.papers.v1";
 const DB_NAME = "litbud-db";
 const DB_VERSION = 1;
 const FILE_STORE = "pdfs";
+const HANDLE_DB_NAME = "litbud-directory-handles";
+const HANDLE_STORE = "handles";
+const LIBRARY_HANDLE_KEY = "library-directory";
 const PDFJS_SOURCES = [
   {
     module: "./node_modules/pdfjs-dist/build/pdf.mjs",
@@ -18,6 +21,8 @@ const els = {
   searchInput: document.querySelector("#searchInput"),
   categoryFilters: document.querySelector("#categoryFilters"),
   paperList: document.querySelector("#paperList"),
+  chooseLibraryBtn: document.querySelector("#chooseLibraryBtn"),
+  storageStatus: document.querySelector("#storageStatus"),
   emptyState: document.querySelector("#emptyState"),
   reader: document.querySelector("#reader"),
   newPaperBtn: document.querySelector("#newPaperBtn"),
@@ -67,14 +72,128 @@ const state = {
 };
 
 let pdfjsPromise = null;
+let directoryStorage = null;
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 }
 
+function openHandleDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(HANDLE_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(HANDLE_STORE)) {
+        db.createObjectStore(HANDLE_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getStoredDirectoryHandle() {
+  if (!("showDirectoryPicker" in window)) return null;
+  const db = await openHandleDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HANDLE_STORE, "readonly");
+    const request = tx.objectStore(HANDLE_STORE).get(LIBRARY_HANDLE_KEY);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function storeDirectoryHandle(handle) {
+  const db = await openHandleDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HANDLE_STORE, "readwrite");
+    tx.objectStore(HANDLE_STORE).put(handle, LIBRARY_HANDLE_KEY);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function verifyDirectoryPermission(handle, mode = "readwrite") {
+  const options = { mode };
+  if ((await handle.queryPermission(options)) === "granted") return true;
+  return (await handle.requestPermission(options)) === "granted";
+}
+
+async function readTextFile(directoryHandle, name) {
+  try {
+    const fileHandle = await directoryHandle.getFileHandle(name);
+    return await (await fileHandle.getFile()).text();
+  } catch (error) {
+    if (error.name === "NotFoundError") return "";
+    throw error;
+  }
+}
+
+async function writeTextFile(directoryHandle, name, text) {
+  const fileHandle = await directoryHandle.getFileHandle(name, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+
+function createDirectoryStorage(directoryHandle) {
+  return {
+    name: directoryHandle.name || "Selected folder",
+    async loadLibrary() {
+      const raw = await readTextFile(directoryHandle, "library.json");
+      if (!raw) return { papers: [] };
+      try {
+        const parsed = JSON.parse(raw);
+        return { papers: Array.isArray(parsed.papers) ? parsed.papers : [] };
+      } catch {
+        return { papers: [] };
+      }
+    },
+    async saveLibrary(papers) {
+      await writeTextFile(
+        directoryHandle,
+        "library.json",
+        JSON.stringify({ savedAt: new Date().toISOString(), papers }, null, 2)
+      );
+    },
+    async savePdf({ id, name, type, arrayBuffer }) {
+      const pdfDir = await directoryHandle.getDirectoryHandle("pdfs", { create: true });
+      const fileHandle = await pdfDir.getFileHandle(`${id}.pdf`, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(new Blob([arrayBuffer], { type: type || "application/pdf" }));
+      await writable.close();
+      return { id, name, type: type || "application/pdf" };
+    },
+    async readPdf(id) {
+      const pdfDir = await directoryHandle.getDirectoryHandle("pdfs", { create: true });
+      const fileHandle = await pdfDir.getFileHandle(`${id}.pdf`);
+      const file = await fileHandle.getFile();
+      return {
+        id,
+        name: file.name,
+        type: file.type || "application/pdf",
+        arrayBuffer: await file.arrayBuffer(),
+      };
+    },
+    async deletePdf(id) {
+      try {
+        const pdfDir = await directoryHandle.getDirectoryHandle("pdfs", { create: true });
+        await pdfDir.removeEntry(`${id}.pdf`);
+      } catch (error) {
+        if (error.name !== "NotFoundError") throw error;
+      }
+    },
+  };
+}
+
 async function loadPapers() {
   if (nativeStorage?.loadLibrary) {
     const library = await nativeStorage.loadLibrary();
+    return Array.isArray(library.papers) ? library.papers : [];
+  }
+
+  if (directoryStorage?.loadLibrary) {
+    const library = await directoryStorage.loadLibrary();
     return Array.isArray(library.papers) ? library.papers : [];
   }
 
@@ -92,7 +211,14 @@ async function persistPapers() {
     return;
   }
 
+  if (directoryStorage?.saveLibrary) {
+    await directoryStorage.saveLibrary(state.papers);
+    updateStorageStatus();
+    return;
+  }
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.papers));
+  updateStorageStatus();
 }
 
 function openDb() {
@@ -112,6 +238,16 @@ function openDb() {
 async function putPdf(id, file) {
   if (nativeStorage?.savePdf) {
     await nativeStorage.savePdf({
+      id,
+      name: file.name,
+      type: file.type || "application/pdf",
+      arrayBuffer: await file.arrayBuffer(),
+    });
+    return;
+  }
+
+  if (directoryStorage?.savePdf) {
+    await directoryStorage.savePdf({
       id,
       name: file.name,
       type: file.type || "application/pdf",
@@ -148,6 +284,17 @@ async function getPdf(id) {
     };
   }
 
+  if (directoryStorage?.readPdf) {
+    const record = await directoryStorage.readPdf(id);
+    if (!record?.arrayBuffer) return null;
+    return {
+      id,
+      name: record.name,
+      type: record.type || "application/pdf",
+      blob: new Blob([record.arrayBuffer], { type: record.type || "application/pdf" }),
+    };
+  }
+
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILE_STORE, "readonly");
@@ -161,6 +308,11 @@ async function deletePdf(id) {
   if (!id) return;
   if (nativeStorage?.deletePdf) {
     await nativeStorage.deletePdf(id);
+    return;
+  }
+
+  if (directoryStorage?.deletePdf) {
+    await directoryStorage.deletePdf(id);
     return;
   }
 
@@ -373,6 +525,24 @@ async function loadPdfJs() {
 
 function setSaveState(message) {
   els.saveState.textContent = message;
+}
+
+function updateStorageStatus(message = "") {
+  if (nativeStorage?.loadLibrary) {
+    els.storageStatus.textContent = "Desktop files";
+    els.chooseLibraryBtn.classList.add("hidden");
+    return;
+  }
+
+  if (!("showDirectoryPicker" in window)) {
+    els.storageStatus.textContent = "Browser storage";
+    els.chooseLibraryBtn.disabled = true;
+    els.chooseLibraryBtn.title = "Folder storage requires Chrome or Edge.";
+    return;
+  }
+
+  els.chooseLibraryBtn.disabled = false;
+  els.storageStatus.textContent = message || (directoryStorage ? `Folder: ${directoryStorage.name}` : "Browser storage");
 }
 
 function hideHighlightActions() {
@@ -847,6 +1017,63 @@ async function addPdfFiles(files) {
   els.formPdf.value = "";
 }
 
+async function collectCurrentPdfRecords() {
+  const records = [];
+  for (const paper of state.papers) {
+    if (!paper.pdfId) continue;
+    try {
+      const record = await getPdf(paper.pdfId);
+      if (record?.blob) {
+        records.push({
+          id: paper.pdfId,
+          name: record.name || `${paper.pdfId}.pdf`,
+          type: record.type || "application/pdf",
+          arrayBuffer: await record.blob.arrayBuffer(),
+        });
+      }
+    } catch {
+      // Keep migrating metadata even if an older PDF blob is missing.
+    }
+  }
+  return records;
+}
+
+async function chooseLibraryFolder() {
+  if (!("showDirectoryPicker" in window)) {
+    alert("Folder storage is available in Chrome and Edge. Safari and Firefox do not currently support this browser API.");
+    return;
+  }
+
+  const currentPdfRecords = await collectCurrentPdfRecords();
+  const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+  const hasPermission = await verifyDirectoryPermission(handle);
+  if (!hasPermission) return;
+
+  const nextStorage = createDirectoryStorage(handle);
+  const existingLibrary = await nextStorage.loadLibrary();
+  const shouldLoadExisting =
+    existingLibrary.papers.length > 0 &&
+    confirm("This folder already has a library.json. Load that folder library instead of copying the current browser library into it?");
+
+  directoryStorage = nextStorage;
+  await storeDirectoryHandle(handle);
+
+  if (shouldLoadExisting) {
+    state.papers = existingLibrary.papers;
+    state.selectedId = state.papers[0]?.id || null;
+    updateStorageStatus();
+    render();
+    return;
+  }
+
+  await directoryStorage.saveLibrary(state.papers);
+  for (const record of currentPdfRecords) {
+    await directoryStorage.savePdf(record);
+  }
+  updateStorageStatus(`Folder: ${directoryStorage.name}`);
+  alert("Library folder connected. Current browser papers and PDFs were copied into that folder.");
+}
+
 async function populateFormFromPdf(file) {
   if (!file) {
     state.pendingFormMetadata = null;
@@ -999,6 +1226,14 @@ function stopDialogDrag() {
 
 function wireEvents() {
   els.newPaperBtn.addEventListener("click", openAddDialog);
+  els.chooseLibraryBtn.addEventListener("click", () => {
+    chooseLibraryFolder().catch((error) => {
+      if (error.name !== "AbortError") {
+        console.error(error);
+        alert("Could not connect that folder. Check permissions and try again.");
+      }
+    });
+  });
   document.querySelectorAll("[data-open-add]").forEach((button) => {
     button.addEventListener("click", openAddDialog);
   });
@@ -1081,9 +1316,20 @@ function wireEvents() {
 }
 
 async function init() {
+  if (!nativeStorage?.loadLibrary) {
+    try {
+      const handle = await getStoredDirectoryHandle();
+      if (handle && (await verifyDirectoryPermission(handle))) {
+        directoryStorage = createDirectoryStorage(handle);
+      }
+    } catch {
+      directoryStorage = null;
+    }
+  }
   state.papers = await loadPapers();
   state.selectedId = state.papers[0]?.id || null;
   wireEvents();
+  updateStorageStatus();
   render();
 }
 

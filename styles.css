@@ -82,6 +82,22 @@ button {
   letter-spacing: 0;
 }
 
+.storage-panel {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.storage-panel .button {
+  width: 100%;
+}
+
+.storage-panel span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 .field-label,
 .section-title,
 label span {
