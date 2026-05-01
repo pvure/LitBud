@@ -108,7 +108,7 @@ What it supports now:
 
 - Add papers to a "want to read" queue.
 - Drag and drop one or more PDFs into the app.
-- Extract embedded PDF title and author metadata.
+- Extract embedded PDF title, author, and year metadata when available.
 - Attach a PDF to each paper.
 - Read the PDF and write the linked note document side by side.
 - Select text in the PDF and click `Highlight` to save a highlight. Click an existing highlight to remove it.

@@ -35,6 +35,7 @@ const els = {
   dialogTitle: document.querySelector("#dialogTitle"),
   formTitle: document.querySelector("#formTitle"),
   formAuthors: document.querySelector("#formAuthors"),
+  formYear: document.querySelector("#formYear"),
   formPdfField: document.querySelector("#formPdfField"),
   formPdf: document.querySelector("#formPdf"),
   formSubmitBtn: document.querySelector("#formSubmitBtn"),
@@ -431,6 +432,10 @@ function cleanText(value = "") {
     .trim();
 }
 
+function normalizeYear(value = "") {
+  return (String(value).match(/\b(19|20)\d{2}\b/) || [])[0] || "";
+}
+
 function decodeXml(value = "") {
   const doc = new DOMParser().parseFromString(`<root>${value}</root>`, "text/html");
   return cleanText(doc.documentElement.textContent || value);
@@ -496,11 +501,17 @@ async function extractPdfMetadata(file) {
     readXmlTag(pdfText, "prism:title") ||
     readPdfInfoField(pdfText, "Title");
   const authors = readDcList(pdfText, "dc:creator") || readPdfInfoField(pdfText, "Author");
+  const date =
+    readXmlTag(pdfText, "prism:publicationDate") ||
+    readXmlTag(pdfText, "prism:coverDate") ||
+    readXmlTag(pdfText, "dc:date") ||
+    readPdfInfoField(pdfText, "CreationDate");
 
   return {
     title: title && !/^Microsoft Word|^untitled$/i.test(title) ? title : "",
     authors,
-    source: title || authors ? "PDF metadata" : "",
+    year: normalizeYear(date),
+    source: title || authors || date ? "PDF metadata" : "",
   };
 }
 
@@ -520,6 +531,7 @@ function paperFromFields({ id, pdfId, file, metadata = {}, fields = {} }) {
     id,
     title: fields.title || metadata.title || (file ? inferTitleFromFile(file) : "Untitled paper"),
     authors: fields.authors || metadata.authors || "",
+    year: normalizeYear(fields.year || metadata.year || ""),
     metadataSource: metadata.source || "",
     status,
     categories: [],
@@ -547,6 +559,7 @@ function metadataPatchForExistingPaper(paper, metadata, file) {
     patch.title = metadata.title;
   }
   if (metadata.authors && !paper.authors) patch.authors = metadata.authors;
+  if (metadata.year && !paper.year) patch.year = metadata.year;
 
   return patch;
 }
@@ -555,6 +568,7 @@ function applyMetadataToForm(metadata) {
   if (!metadata) return;
   if (metadata.title && !els.formTitle.value.trim()) els.formTitle.value = metadata.title;
   if (metadata.authors && !els.formAuthors.value.trim()) els.formAuthors.value = metadata.authors;
+  if (metadata.year && !els.formYear.value.trim()) els.formYear.value = metadata.year;
 }
 
 function compactAuthors(authors = "") {
@@ -571,6 +585,10 @@ function compactAuthors(authors = "") {
   }
 
   return `${names[0]}, ... ${names[names.length - 1]}`;
+}
+
+function libraryMetaLine(paper) {
+  return [paper.year, compactAuthors(paper.authors)].filter(Boolean).join(" · ");
 }
 
 function setFormMetadataStatus(message, isWarning = false) {
@@ -685,6 +703,7 @@ function filteredPapers() {
       const haystack = [
         paper.title,
         paper.authors,
+        paper.year,
         paper.metadataSource,
         ...paper.categories,
         ...paper.tags,
@@ -749,12 +768,12 @@ function renderPaperList() {
     item.innerHTML = `
       <button class="paper-main" type="button">
         <strong>${escapeHtml(paper.title)}</strong>
-        <span>${escapeHtml(compactAuthors(paper.authors))}</span>
+        <span>${escapeHtml(libraryMetaLine(paper))}</span>
         <div class="paper-item-tags">
           ${paper.pdfId ? "<small>PDF</small>" : ""}
         </div>
       </button>
-      <button class="paper-edit" type="button" aria-label="Edit ${escapeHtml(paper.title)}" title="Edit title and authors">✎</button>
+      <button class="paper-edit" type="button" aria-label="Edit ${escapeHtml(paper.title)}" title="Edit title, authors, and year">✎</button>
     `;
     item.querySelector(".paper-main").addEventListener("click", () => {
       selectPaper(paper.id);
@@ -1010,6 +1029,7 @@ function openEditDialog(id) {
   els.formPdfField.classList.add("hidden");
   els.formTitle.value = paper.title || "";
   els.formAuthors.value = paper.authors || "";
+  els.formYear.value = paper.year || "";
   setFormMetadataStatus("");
   els.paperDialog.showModal();
   resetDialogPosition();
@@ -1022,6 +1042,7 @@ async function createPaperFromForm(event) {
     updatePaper(state.editingId, {
       title: els.formTitle.value.trim() || "Untitled paper",
       authors: els.formAuthors.value.trim(),
+      year: normalizeYear(els.formYear.value.trim()),
     });
     state.editingId = null;
     els.paperDialog.close();
@@ -1029,7 +1050,7 @@ async function createPaperFromForm(event) {
   }
 
   const files = [...(els.formPdf.files || [])].filter((file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name));
-  const hasManualFields = Boolean(els.formTitle.value.trim() || els.formAuthors.value.trim());
+  const hasManualFields = Boolean(els.formTitle.value.trim() || els.formAuthors.value.trim() || els.formYear.value.trim());
 
   if (files.length > 1 && !hasManualFields) {
     els.paperDialog.close();
@@ -1044,7 +1065,7 @@ async function createPaperFromForm(event) {
 
   if (file) {
     if (!state.pendingFormMetadata) {
-      setFormMetadataStatus("Reading title and authors...");
+      setFormMetadataStatus("Reading title, authors, and year...");
       metadata = await lookupPdfMetadata(file);
     }
     await putPdf(pdfId, file);
@@ -1058,6 +1079,7 @@ async function createPaperFromForm(event) {
     fields: {
       title: els.formTitle.value.trim(),
       authors: els.formAuthors.value.trim(),
+      year: els.formYear.value.trim(),
       status: "queue",
     },
   });
@@ -1076,7 +1098,7 @@ async function attachPdf(event) {
   if (!paper || !file) return;
 
   const pdfId = paper.pdfId || uid();
-  setSaveState("Reading title and authors...");
+  setSaveState("Reading title, authors, and year...");
   const metadata = await lookupPdfMetadata(file);
   await putPdf(pdfId, file);
   updatePaper(paper.id, { pdfId, ...metadataPatchForExistingPaper(paper, metadata, file) });
@@ -1247,15 +1269,15 @@ async function populateFormFromPdf(file) {
     return;
   }
 
-  setFormMetadataStatus("Reading title and authors...");
+  setFormMetadataStatus("Reading title, authors, and year...");
   const metadata = await lookupPdfMetadata(file);
   state.pendingFormMetadata = metadata;
   applyMetadataToForm(metadata);
 
-  if (metadata.title || metadata.authors) {
-    setFormMetadataStatus(`<strong>Title/author metadata found.</strong> ${escapeHtml(metadata.title || metadata.authors || "")}`);
+  if (metadata.title || metadata.authors || metadata.year) {
+    setFormMetadataStatus(`<strong>Metadata found.</strong> ${escapeHtml(metadata.title || metadata.authors || metadata.year || "")}`);
   } else {
-    setFormMetadataStatus("No embedded title or authors were found. You can edit the fields manually.", true);
+    setFormMetadataStatus("No embedded title, authors, or year were found. You can edit the fields manually.", true);
   }
 }
 
