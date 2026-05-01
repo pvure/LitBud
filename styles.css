@@ -230,6 +230,12 @@ label span {
   font-size: 0.86rem;
 }
 
+.paper-main .paper-year {
+  margin-top: 3px;
+  color: #7c8782;
+  font-size: 0.78rem;
+}
+
 .paper-edit {
   display: grid;
   place-items: center;

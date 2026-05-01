@@ -588,7 +588,7 @@ function compactAuthors(authors = "") {
 }
 
 function libraryMetaLine(paper) {
-  return [paper.year, compactAuthors(paper.authors)].filter(Boolean).join(" · ");
+  return compactAuthors(paper.authors);
 }
 
 function setFormMetadataStatus(message, isWarning = false) {
@@ -769,6 +769,7 @@ function renderPaperList() {
       <button class="paper-main" type="button">
         <strong>${escapeHtml(paper.title)}</strong>
         <span>${escapeHtml(libraryMetaLine(paper))}</span>
+        ${paper.year ? `<span class="paper-year">${escapeHtml(paper.year)}</span>` : ""}
         <div class="paper-item-tags">
           ${paper.pdfId ? "<small>PDF</small>" : ""}
         </div>
