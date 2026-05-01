@@ -2,15 +2,19 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const fs = require("fs/promises");
 const path = require("path");
 
-const libraryFile = () => path.join(app.getPath("userData"), "library.json");
-const pdfDirectory = () => path.join(app.getPath("userData"), "pdfs");
+const MAX_LIBRARY_BACKUPS = 100;
+const libraryDirectory = () => path.join(app.getPath("documents"), "Papers Library");
+const libraryFile = () => path.join(libraryDirectory(), "library.json");
+const pdfDirectory = () => path.join(libraryDirectory(), "pdfs");
+const backupDirectory = () => path.join(libraryDirectory(), "backups");
 
 async function ensureStorage() {
   await fs.mkdir(pdfDirectory(), { recursive: true });
+  await fs.mkdir(backupDirectory(), { recursive: true });
   try {
     await fs.access(libraryFile());
   } catch {
-    await fs.writeFile(libraryFile(), JSON.stringify({ papers: [] }, null, 2));
+    await atomicWriteJson(libraryFile(), { savedAt: new Date().toISOString(), papers: [] }, false);
   }
 }
 
@@ -25,8 +29,40 @@ async function readLibrary() {
     const parsed = JSON.parse(raw);
     return { papers: Array.isArray(parsed.papers) ? parsed.papers : [] };
   } catch {
+    const corruptName = `library-corrupt-${Date.now()}.json`;
+    await fs.copyFile(libraryFile(), path.join(backupDirectory(), corruptName));
     return { papers: [] };
   }
+}
+
+async function pruneBackups() {
+  const entries = await fs.readdir(backupDirectory());
+  const backups = entries
+    .filter((name) => name.startsWith("library-") && name.endsWith(".json"))
+    .sort()
+    .reverse();
+
+  await Promise.all(
+    backups.slice(MAX_LIBRARY_BACKUPS).map((name) => fs.unlink(path.join(backupDirectory(), name)).catch(() => {}))
+  );
+}
+
+async function atomicWriteJson(filePath, payload, backupExisting = true) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+
+  if (backupExisting) {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await fs.copyFile(filePath, path.join(backupDirectory(), `library-${stamp}.json`));
+      await pruneBackups();
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+
+  const tempFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempFile, JSON.stringify(payload, null, 2));
+  await fs.rename(tempFile, filePath);
 }
 
 async function writeLibrary(papers) {
@@ -35,7 +71,7 @@ async function writeLibrary(papers) {
     savedAt: new Date().toISOString(),
     papers: Array.isArray(papers) ? papers : [],
   };
-  await fs.writeFile(libraryFile(), JSON.stringify(payload, null, 2));
+  await atomicWriteJson(libraryFile(), payload);
   return payload;
 }
 
@@ -67,7 +103,10 @@ ipcMain.handle("library:save", async (_event, papers) => {
 ipcMain.handle("pdf:save", async (_event, payload) => {
   await ensureStorage();
   const buffer = Buffer.from(payload.arrayBuffer);
-  await fs.writeFile(pdfPath(payload.id), buffer);
+  const destination = pdfPath(payload.id);
+  const tempFile = `${destination}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempFile, buffer);
+  await fs.rename(tempFile, destination);
   return {
     id: payload.id,
     name: payload.name,
@@ -98,9 +137,10 @@ ipcMain.handle("pdf:delete", async (_event, id) => {
 ipcMain.handle("storage:info", async () => {
   await ensureStorage();
   return {
-    dataDir: app.getPath("userData"),
+    dataDir: libraryDirectory(),
     libraryFile: libraryFile(),
     pdfDir: pdfDirectory(),
+    backupDir: backupDirectory(),
   };
 });
 

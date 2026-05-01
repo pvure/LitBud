@@ -4,6 +4,14 @@ A local-first reading tracker for research papers.
 
 ## Use it
 
+For the easiest Mac experience, open the packaged app:
+
+```text
+dist/mac-arm64/Papers.app
+```
+
+You can drag `Papers.app` into `/Applications` after building it.
+
 For the lightweight browser app with durable local files:
 
 ```bash
@@ -23,6 +31,12 @@ For the desktop app:
 
 ```bash
 npm run desktop
+```
+
+To rebuild the double-clickable macOS app:
+
+```bash
+npm run pack:mac
 ```
 
 The old browser-only mode still works by opening `index.html`, but browser-only mode stores data in browser storage unless you use Chrome/Edge folder mode.
@@ -86,16 +100,18 @@ What it supports now:
 
 ## Storage
 
-In the desktop app, paper metadata, notes, categories, and highlights are saved to:
+The packaged app and local server both use:
 
 ```text
-~/Library/Application Support/papers-local/library.json
+~/Documents/Papers Library/
 ```
 
-PDF files are copied to:
+with:
 
 ```text
-~/Library/Application Support/papers-local/pdfs/
+library.json
+pdfs/
+backups/
 ```
 
 In browser mode without a connected library folder, paper metadata and notes are saved in browser `localStorage`; PDF files are saved in browser `IndexedDB`.

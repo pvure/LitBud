@@ -6,12 +6,32 @@
   "main": "main.js",
   "scripts": {
     "start": "node server.js",
-    "desktop": "electron ."
+    "desktop": "electron .",
+    "pack:mac": "electron-builder --mac dir"
+  },
+  "build": {
+    "appId": "dev.litbud.papers",
+    "productName": "Papers",
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "main.js",
+      "preload.js",
+      "node_modules/pdfjs-dist/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.productivity"
+    }
   },
   "dependencies": {
     "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
-    "electron": "^30.5.1"
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3"
   }
 }
