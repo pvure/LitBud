@@ -5,7 +5,8 @@
   "description": "A local-first paper reading and notes app.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "node server.js",
+    "desktop": "electron ."
   },
   "dependencies": {
     "pdfjs-dist": "^4.10.38"

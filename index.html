@@ -16,6 +16,11 @@
 
         <div id="storagePanel" class="storage-panel">
           <button id="chooseLibraryBtn" class="button secondary compact" type="button">Library folder</button>
+          <div class="backup-actions">
+            <button id="exportBackupBtn" class="button secondary compact" type="button">Export</button>
+            <label class="button secondary compact" for="importBackupInput">Import</label>
+            <input id="importBackupInput" class="hidden-input" type="file" accept="application/json" />
+          </div>
           <span id="storageStatus">Browser storage</span>
         </div>
 

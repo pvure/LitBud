@@ -4,14 +4,54 @@ A local-first reading tracker for research papers.
 
 ## Use it
 
-For the desktop app:
+For the lightweight browser app with durable local files:
 
 ```bash
 npm install
 npm start
 ```
 
-The old browser mode still works by opening `index.html`, but browser mode stores data in browser storage. The desktop app stores data as normal local files.
+Then open:
+
+```text
+http://localhost:4317
+```
+
+This works in Safari and Chrome. The browser is only the interface; a tiny local server writes your data to normal files.
+
+For the desktop app:
+
+```bash
+npm run desktop
+```
+
+The old browser-only mode still works by opening `index.html`, but browser-only mode stores data in browser storage unless you use Chrome/Edge folder mode.
+
+## Local server storage
+
+The local server stores your long-term library here by default:
+
+```text
+~/Documents/Papers Library/
+```
+
+It writes:
+
+```text
+library.json
+pdfs/
+backups/
+```
+
+`library.json` is written atomically, and the previous version is copied into `backups/` before each save. The newest 100 metadata backups are kept.
+
+To use a different folder:
+
+```bash
+PAPERS_LIBRARY_DIR="/path/to/your/folder" npm start
+```
+
+Use `Export` in the sidebar to make a full manual backup with metadata and PDFs in one JSON file. Use `Import` to restore one.
 
 ## Browser folder mode
 

@@ -88,7 +88,17 @@ button {
   margin-bottom: 16px;
 }
 
-.storage-panel .button {
+.storage-panel > .button {
+  width: 100%;
+}
+
+.backup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.backup-actions .button {
   width: 100%;
 }
 

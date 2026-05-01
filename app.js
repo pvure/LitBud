@@ -16,12 +16,15 @@ const PDFJS_SOURCES = [
   },
 ];
 const nativeStorage = window.litbudStorage || null;
+const serverStorage = !nativeStorage && /^https?:$/.test(window.location.protocol) ? createServerStorage() : null;
 
 const els = {
   searchInput: document.querySelector("#searchInput"),
   categoryFilters: document.querySelector("#categoryFilters"),
   paperList: document.querySelector("#paperList"),
   chooseLibraryBtn: document.querySelector("#chooseLibraryBtn"),
+  exportBackupBtn: document.querySelector("#exportBackupBtn"),
+  importBackupInput: document.querySelector("#importBackupInput"),
   storageStatus: document.querySelector("#storageStatus"),
   emptyState: document.querySelector("#emptyState"),
   reader: document.querySelector("#reader"),
@@ -73,6 +76,54 @@ const state = {
 
 let pdfjsPromise = null;
 let directoryStorage = null;
+
+function createServerStorage() {
+  return {
+    async loadLibrary() {
+      const response = await fetch("/api/library");
+      if (!response.ok) throw new Error("Could not load local library");
+      return response.json();
+    },
+    async saveLibrary(papers) {
+      const response = await fetch("/api/library", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ papers }),
+      });
+      if (!response.ok) throw new Error("Could not save local library");
+      return response.json();
+    },
+    async savePdf({ id, arrayBuffer }) {
+      const response = await fetch(`/api/pdf/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/pdf" },
+        body: arrayBuffer,
+      });
+      if (!response.ok) throw new Error("Could not save PDF");
+      return response.json();
+    },
+    async readPdf(id) {
+      const response = await fetch(`/api/pdf/${encodeURIComponent(id)}`);
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("Could not read PDF");
+      return {
+        id,
+        name: `${id}.pdf`,
+        type: "application/pdf",
+        arrayBuffer: await response.arrayBuffer(),
+      };
+    },
+    async deletePdf(id) {
+      const response = await fetch(`/api/pdf/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Could not delete PDF");
+    },
+    async storageInfo() {
+      const response = await fetch("/api/storage-info");
+      if (!response.ok) throw new Error("Could not load storage info");
+      return response.json();
+    },
+  };
+}
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -192,6 +243,11 @@ async function loadPapers() {
     return Array.isArray(library.papers) ? library.papers : [];
   }
 
+  if (serverStorage?.loadLibrary) {
+    const library = await serverStorage.loadLibrary();
+    return Array.isArray(library.papers) ? library.papers : [];
+  }
+
   if (directoryStorage?.loadLibrary) {
     const library = await directoryStorage.loadLibrary();
     return Array.isArray(library.papers) ? library.papers : [];
@@ -208,6 +264,12 @@ async function loadPapers() {
 async function persistPapers() {
   if (nativeStorage?.saveLibrary) {
     await nativeStorage.saveLibrary(state.papers);
+    return;
+  }
+
+  if (serverStorage?.saveLibrary) {
+    await serverStorage.saveLibrary(state.papers);
+    updateStorageStatus();
     return;
   }
 
@@ -238,6 +300,16 @@ function openDb() {
 async function putPdf(id, file) {
   if (nativeStorage?.savePdf) {
     await nativeStorage.savePdf({
+      id,
+      name: file.name,
+      type: file.type || "application/pdf",
+      arrayBuffer: await file.arrayBuffer(),
+    });
+    return;
+  }
+
+  if (serverStorage?.savePdf) {
+    await serverStorage.savePdf({
       id,
       name: file.name,
       type: file.type || "application/pdf",
@@ -284,6 +356,17 @@ async function getPdf(id) {
     };
   }
 
+  if (serverStorage?.readPdf) {
+    const record = await serverStorage.readPdf(id);
+    if (!record?.arrayBuffer) return null;
+    return {
+      id,
+      name: record.name,
+      type: record.type || "application/pdf",
+      blob: new Blob([record.arrayBuffer], { type: record.type || "application/pdf" }),
+    };
+  }
+
   if (directoryStorage?.readPdf) {
     const record = await directoryStorage.readPdf(id);
     if (!record?.arrayBuffer) return null;
@@ -308,6 +391,11 @@ async function deletePdf(id) {
   if (!id) return;
   if (nativeStorage?.deletePdf) {
     await nativeStorage.deletePdf(id);
+    return;
+  }
+
+  if (serverStorage?.deletePdf) {
+    await serverStorage.deletePdf(id);
     return;
   }
 
@@ -530,6 +618,12 @@ function setSaveState(message) {
 function updateStorageStatus(message = "") {
   if (nativeStorage?.loadLibrary) {
     els.storageStatus.textContent = "Desktop files";
+    els.chooseLibraryBtn.classList.add("hidden");
+    return;
+  }
+
+  if (serverStorage?.loadLibrary) {
+    els.storageStatus.textContent = message || "Local folder";
     els.chooseLibraryBtn.classList.add("hidden");
     return;
   }
@@ -1038,6 +1132,78 @@ async function collectCurrentPdfRecords() {
   return records;
 }
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+async function exportBackup() {
+  updateStorageStatus("Preparing backup...");
+  const pdfRecords = await collectCurrentPdfRecords();
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    papers: state.papers,
+    pdfs: await Promise.all(
+      pdfRecords.map(async (record) => ({
+        id: record.id,
+        name: record.name,
+        type: record.type,
+        base64: arrayBufferToBase64(record.arrayBuffer),
+      }))
+    ),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `papers-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  updateStorageStatus();
+}
+
+async function importBackup(file) {
+  if (!file) return;
+  const payload = JSON.parse(await file.text());
+  if (!Array.isArray(payload.papers)) {
+    alert("This does not look like a Papers backup.");
+    return;
+  }
+
+  const shouldReplace = confirm("Import this backup? This will replace the currently loaded library.");
+  if (!shouldReplace) return;
+
+  state.papers = payload.papers;
+  state.selectedId = state.papers[0]?.id || null;
+  await persistPapers();
+
+  for (const pdf of payload.pdfs || []) {
+    if (!pdf.id || !pdf.base64) continue;
+    await putPdf(
+      pdf.id,
+      new File([base64ToArrayBuffer(pdf.base64)], pdf.name || `${pdf.id}.pdf`, {
+        type: pdf.type || "application/pdf",
+      })
+    );
+  }
+
+  render();
+  alert("Backup imported.");
+}
+
 async function chooseLibraryFolder() {
   if (!("showDirectoryPicker" in window)) {
     alert("Folder storage is available in Chrome and Edge. Safari and Firefox do not currently support this browser API.");
@@ -1226,6 +1392,24 @@ function stopDialogDrag() {
 
 function wireEvents() {
   els.newPaperBtn.addEventListener("click", openAddDialog);
+  els.exportBackupBtn.addEventListener("click", () => {
+    exportBackup().catch((error) => {
+      console.error(error);
+      alert("Could not export backup.");
+      updateStorageStatus();
+    });
+  });
+  els.importBackupInput.addEventListener("change", async (event) => {
+    try {
+      await importBackup(event.target.files?.[0]);
+    } catch (error) {
+      console.error(error);
+      alert("Could not import backup.");
+    } finally {
+      event.target.value = "";
+      updateStorageStatus();
+    }
+  });
   els.chooseLibraryBtn.addEventListener("click", () => {
     chooseLibraryFolder().catch((error) => {
       if (error.name !== "AbortError") {
@@ -1316,7 +1500,16 @@ function wireEvents() {
 }
 
 async function init() {
-  if (!nativeStorage?.loadLibrary) {
+  if (serverStorage?.storageInfo) {
+    try {
+      const info = await serverStorage.storageInfo();
+      updateStorageStatus(`Local: ${info.libraryDir}`);
+    } catch {
+      updateStorageStatus("Local folder");
+    }
+  }
+
+  if (!nativeStorage?.loadLibrary && !serverStorage?.loadLibrary) {
     try {
       const handle = await getStoredDirectoryHandle();
       if (handle && (await verifyDirectoryPermission(handle))) {
