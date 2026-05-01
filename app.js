@@ -2,8 +2,17 @@ const STORAGE_KEY = "litbud.papers.v1";
 const DB_NAME = "litbud-db";
 const DB_VERSION = 1;
 const FILE_STORE = "pdfs";
-const PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs";
-const PDFJS_WORKER_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
+const PDFJS_SOURCES = [
+  {
+    module: "./node_modules/pdfjs-dist/build/pdf.mjs",
+    worker: "./node_modules/pdfjs-dist/build/pdf.worker.mjs",
+  },
+  {
+    module: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs",
+    worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs",
+  },
+];
+const nativeStorage = window.litbudStorage || null;
 
 const els = {
   searchInput: document.querySelector("#searchInput"),
@@ -63,7 +72,12 @@ function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 }
 
-function loadPapers() {
+async function loadPapers() {
+  if (nativeStorage?.loadLibrary) {
+    const library = await nativeStorage.loadLibrary();
+    return Array.isArray(library.papers) ? library.papers : [];
+  }
+
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
     return Array.isArray(parsed) ? parsed : [];
@@ -72,7 +86,12 @@ function loadPapers() {
   }
 }
 
-function persistPapers() {
+async function persistPapers() {
+  if (nativeStorage?.saveLibrary) {
+    await nativeStorage.saveLibrary(state.papers);
+    return;
+  }
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.papers));
 }
 
@@ -91,6 +110,16 @@ function openDb() {
 }
 
 async function putPdf(id, file) {
+  if (nativeStorage?.savePdf) {
+    await nativeStorage.savePdf({
+      id,
+      name: file.name,
+      type: file.type || "application/pdf",
+      arrayBuffer: await file.arrayBuffer(),
+    });
+    return;
+  }
+
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILE_STORE, "readwrite");
@@ -108,6 +137,17 @@ async function putPdf(id, file) {
 
 async function getPdf(id) {
   if (!id) return null;
+  if (nativeStorage?.readPdf) {
+    const record = await nativeStorage.readPdf(id);
+    if (!record?.arrayBuffer) return null;
+    return {
+      id,
+      name: record.name,
+      type: record.type || "application/pdf",
+      blob: new Blob([record.arrayBuffer], { type: record.type || "application/pdf" }),
+    };
+  }
+
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILE_STORE, "readonly");
@@ -119,6 +159,11 @@ async function getPdf(id) {
 
 async function deletePdf(id) {
   if (!id) return;
+  if (nativeStorage?.deletePdf) {
+    await nativeStorage.deletePdf(id);
+    return;
+  }
+
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILE_STORE, "readwrite");
@@ -309,10 +354,19 @@ function updatePaper(id, patch, options = {}) {
 
 async function loadPdfJs() {
   if (!pdfjsPromise) {
-    pdfjsPromise = import(PDFJS_URL).then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-      return pdfjs;
-    });
+    pdfjsPromise = (async () => {
+      let lastError;
+      for (const source of PDFJS_SOURCES) {
+        try {
+          const pdfjs = await import(source.module);
+          pdfjs.GlobalWorkerOptions.workerSrc = source.worker;
+          return pdfjs;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
+    })();
   }
   return pdfjsPromise;
 }
@@ -1026,35 +1080,8 @@ function wireEvents() {
   });
 }
 
-function seedIfEmpty() {
-  if (state.papers.length) return;
-  state.papers = [
-    {
-      id: uid(),
-      title: "Example: A paper I want to read",
-      authors: "Future You",
-      status: "queue",
-      categories: [],
-      tags: ["sample"],
-      question: "Why is this worth reading now?",
-      notes: "Start notes as you read. Add page numbers so your PDF and notes stay linked.",
-      highlights: "",
-      takeaways: "",
-      pdfHighlights: [],
-      pdfId: null,
-      addedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      lastOpened: "",
-      readAt: "",
-    },
-  ];
-  state.selectedId = state.papers[0].id;
-  persistPapers();
-}
-
-function init() {
-  state.papers = loadPapers();
-  seedIfEmpty();
+async function init() {
+  state.papers = await loadPapers();
   state.selectedId = state.papers[0]?.id || null;
   wireEvents();
   render();

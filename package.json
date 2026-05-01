@@ -1,0 +1,16 @@
+{
+  "name": "papers-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first paper reading and notes app.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.10.38"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1"
+  }
+}

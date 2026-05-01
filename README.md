@@ -1,10 +1,17 @@
 # Papers
 
-A local-first reading tracker for research papers. It is built as a static browser app, so it runs without installing packages or setting up a backend.
+A local-first reading tracker for research papers.
 
 ## Use it
 
-Open `index.html` in a browser.
+For the desktop app:
+
+```bash
+npm install
+npm start
+```
+
+The old browser mode still works by opening `index.html`, but browser mode stores data in browser storage. The desktop app stores data as normal local files.
 
 What it supports now:
 
@@ -20,7 +27,19 @@ What it supports now:
 
 ## Storage
 
-Paper metadata and notes are saved in browser `localStorage`. PDF files are saved in browser `IndexedDB`. This means the data stays on this machine and in this browser profile.
+In the desktop app, paper metadata, notes, categories, and highlights are saved to:
+
+```text
+~/Library/Application Support/papers-local/library.json
+```
+
+PDF files are copied to:
+
+```text
+~/Library/Application Support/papers-local/pdfs/
+```
+
+In browser mode, paper metadata and notes are saved in browser `localStorage`; PDF files are saved in browser `IndexedDB`.
 
 PDF metadata parsing is intentionally fast and local. Scanned PDFs and files without embedded title/author fields may still need manual cleanup.
 
