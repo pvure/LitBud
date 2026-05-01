@@ -53,12 +53,17 @@
               <div class="pane-header">
                 <h3>PDF</h3>
                 <div class="pane-actions">
+                  <button id="zoomOutBtn" class="button secondary compact hidden" type="button" title="Zoom out">-</button>
+                  <span id="zoomLabel" class="zoom-label hidden">100%</span>
+                  <button id="zoomInBtn" class="button secondary compact hidden" type="button" title="Zoom in">+</button>
+                  <button id="highlightBtn" class="button secondary compact hidden" type="button">Highlight</button>
                   <label class="button secondary compact" for="pdfInput">Attach</label>
                   <input id="pdfInput" class="hidden-input" type="file" accept="application/pdf" />
                   <a id="openPdfLink" class="button secondary compact hidden" target="_blank" rel="noreferrer">Open</a>
                   <button id="deleteBtn" class="button danger compact" type="button">Delete</button>
                 </div>
               </div>
+              <button id="floatingHighlightBtn" class="floating-highlight hidden" type="button">Highlight</button>
               <div id="pdfViewer" class="pdf-viewer">
                 <div class="pdf-placeholder">
                   <strong>No PDF attached.</strong>

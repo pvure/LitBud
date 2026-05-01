@@ -2,6 +2,8 @@ const STORAGE_KEY = "litbud.papers.v1";
 const DB_NAME = "litbud-db";
 const DB_VERSION = 1;
 const FILE_STORE = "pdfs";
+const PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs";
+const PDFJS_WORKER_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
 
 const els = {
   searchInput: document.querySelector("#searchInput"),
@@ -29,6 +31,11 @@ const els = {
   saveState: document.querySelector("#saveState"),
   pdfInput: document.querySelector("#pdfInput"),
   pdfViewer: document.querySelector("#pdfViewer"),
+  zoomOutBtn: document.querySelector("#zoomOutBtn"),
+  zoomLabel: document.querySelector("#zoomLabel"),
+  zoomInBtn: document.querySelector("#zoomInBtn"),
+  highlightBtn: document.querySelector("#highlightBtn"),
+  floatingHighlightBtn: document.querySelector("#floatingHighlightBtn"),
   openPdfLink: document.querySelector("#openPdfLink"),
   deleteBtn: document.querySelector("#deleteBtn"),
 };
@@ -42,8 +49,15 @@ const state = {
   saveTimer: null,
   dragDepth: 0,
   pendingFormMetadata: null,
+  pendingHighlight: null,
+  pdfRenderToken: null,
+  currentPdfRecord: null,
+  pdfZoom: 1,
   editingId: null,
+  dialogDrag: null,
 };
+
+let pdfjsPromise = null;
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -229,6 +243,7 @@ function paperFromFields({ id, pdfId, file, metadata = {}, fields = {} }) {
     notes: "",
     highlights: "",
     takeaways: "",
+    pdfHighlights: [],
     pdfId,
     addedAt: now,
     updatedAt: now,
@@ -292,8 +307,35 @@ function updatePaper(id, patch, options = {}) {
   }
 }
 
+async function loadPdfJs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import(PDFJS_URL).then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      return pdfjs;
+    });
+  }
+  return pdfjsPromise;
+}
+
 function setSaveState(message) {
   els.saveState.textContent = message;
+}
+
+function hideHighlightActions() {
+  els.highlightBtn.classList.add("hidden");
+  els.floatingHighlightBtn.classList.add("hidden");
+}
+
+function setZoomControlsVisible(isVisible) {
+  els.zoomOutBtn.classList.toggle("hidden", !isVisible);
+  els.zoomInBtn.classList.toggle("hidden", !isVisible);
+  els.zoomLabel.classList.toggle("hidden", !isVisible);
+}
+
+function updateZoomLabel() {
+  els.zoomLabel.textContent = `${Math.round(state.pdfZoom * 100)}%`;
+  els.zoomOutBtn.disabled = state.pdfZoom <= 0.7;
+  els.zoomInBtn.disabled = state.pdfZoom >= 2;
 }
 
 function scheduleNoteSave() {
@@ -418,16 +460,141 @@ function escapeHtml(value = "") {
   });
 }
 
+function fallbackPdfViewer(url) {
+  els.pdfViewer.classList.remove("is-pdfjs");
+  els.pdfViewer.innerHTML = `<object data="${url}" type="application/pdf"><iframe src="${url}" title="PDF viewer"></iframe></object>`;
+}
+
+function renderStoredHighlights(paper) {
+  const highlights = paper?.pdfHighlights || [];
+  els.pdfViewer.querySelectorAll(".pdf-highlight-layer").forEach((layer) => {
+    layer.innerHTML = "";
+  });
+
+  highlights.forEach((highlight) => {
+    highlight.rects.forEach((rect) => {
+      const layer = els.pdfViewer.querySelector(`.pdf-highlight-layer[data-page-number="${rect.page}"]`);
+      if (!layer) return;
+      const box = document.createElement("button");
+      box.className = "pdf-highlight-box";
+      box.type = "button";
+      box.title = "Remove highlight";
+      box.style.left = `${rect.x * 100}%`;
+      box.style.top = `${rect.y * 100}%`;
+      box.style.width = `${rect.width * 100}%`;
+      box.style.height = `${rect.height * 100}%`;
+      box.addEventListener("click", (event) => {
+        event.stopPropagation();
+        removePdfHighlight(highlight.id);
+      });
+      layer.append(box);
+    });
+  });
+}
+
+function removePdfHighlight(id) {
+  const paper = selectedPaper();
+  if (!paper) return;
+  updatePaper(
+    paper.id,
+    { pdfHighlights: (paper.pdfHighlights || []).filter((highlight) => highlight.id !== id) },
+    { render: false }
+  );
+  renderStoredHighlights(selectedPaper());
+}
+
+async function renderPdfPage(pdfjs, pdf, paper, pageNumber, containerWidth, token) {
+  const page = await pdf.getPage(pageNumber);
+  if (state.pdfRenderToken !== token) return;
+
+  const baseViewport = page.getViewport({ scale: 1 });
+  const fitScale = Math.min(1.6, Math.max(0.8, (containerWidth - 36) / baseViewport.width));
+  const scale = fitScale * state.pdfZoom;
+  const viewport = page.getViewport({ scale });
+
+  const pageEl = document.createElement("div");
+  pageEl.className = "pdf-page-render";
+  pageEl.dataset.pageNumber = String(pageNumber);
+  pageEl.style.width = `${viewport.width}px`;
+  pageEl.style.height = `${viewport.height}px`;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width * window.devicePixelRatio);
+  canvas.height = Math.floor(viewport.height * window.devicePixelRatio);
+  canvas.style.width = `${viewport.width}px`;
+  canvas.style.height = `${viewport.height}px`;
+  const context = canvas.getContext("2d");
+  context.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+
+  const textLayer = document.createElement("div");
+  textLayer.className = "pdf-text-layer";
+
+  const highlightLayer = document.createElement("div");
+  highlightLayer.className = "pdf-highlight-layer";
+  highlightLayer.dataset.pageNumber = String(pageNumber);
+
+  pageEl.append(canvas, textLayer, highlightLayer);
+  els.pdfViewer.querySelector(".pdf-document").append(pageEl);
+
+  await page.render({ canvasContext: context, viewport }).promise;
+  const textContent = await page.getTextContent();
+
+  textContent.items.forEach((item) => {
+    if (!item.str) return;
+    const tx = pdfjs.Util.transform(viewport.transform, item.transform);
+    const height = Math.hypot(tx[2], tx[3]);
+    const width = Math.max(1, item.width * scale);
+    const span = document.createElement("span");
+    span.textContent = item.str;
+    span.style.left = `${tx[4]}px`;
+    span.style.top = `${tx[5] - height}px`;
+    span.style.fontSize = `${height}px`;
+    span.style.width = `${width}px`;
+    span.style.height = `${height * 1.15}px`;
+    textLayer.append(span);
+  });
+
+  renderStoredHighlights(paper);
+}
+
+async function renderPdfWithPdfJs(record, paper) {
+  const pdfjs = await loadPdfJs();
+  const token = uid();
+  state.pdfRenderToken = token;
+  state.pendingHighlight = null;
+  hideHighlightActions();
+  setZoomControlsVisible(true);
+  updateZoomLabel();
+  els.pdfViewer.classList.add("is-pdfjs");
+  els.pdfViewer.innerHTML = `<div class="pdf-document-status">Loading PDF...</div><div class="pdf-document"></div>`;
+
+  const pdf = await pdfjs.getDocument({ data: await record.blob.arrayBuffer() }).promise;
+  if (state.pdfRenderToken !== token) return;
+
+  els.pdfViewer.querySelector(".pdf-document-status").textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}`;
+  const containerWidth = Math.max(420, els.pdfViewer.clientWidth || 720);
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    await renderPdfPage(pdfjs, pdf, paper, pageNumber, containerWidth, token);
+  }
+}
+
 async function renderPdf(paper) {
   if (state.pdfUrl) {
     URL.revokeObjectURL(state.pdfUrl);
     state.pdfUrl = null;
   }
+  state.pdfRenderToken = null;
+  state.pendingHighlight = null;
+  state.currentPdfRecord = null;
+  hideHighlightActions();
+  setZoomControlsVisible(false);
 
   els.openPdfLink.classList.add("hidden");
   els.openPdfLink.removeAttribute("href");
 
   if (!paper?.pdfId) {
+    els.pdfViewer.classList.remove("is-pdfjs");
     els.pdfViewer.innerHTML = `
       <div class="pdf-placeholder">
         <strong>No PDF attached.</strong>
@@ -440,17 +607,24 @@ async function renderPdf(paper) {
   try {
     const record = await getPdf(paper.pdfId);
     if (!record?.blob) throw new Error("Missing PDF blob");
+    state.currentPdfRecord = record;
     state.pdfUrl = URL.createObjectURL(record.blob);
-    els.pdfViewer.innerHTML = `<object data="${state.pdfUrl}" type="application/pdf"><iframe src="${state.pdfUrl}" title="PDF viewer"></iframe></object>`;
     els.openPdfLink.href = state.pdfUrl;
     els.openPdfLink.classList.remove("hidden");
+    await renderPdfWithPdfJs(record, paper);
   } catch {
-    els.pdfViewer.innerHTML = `
-      <div class="pdf-placeholder">
-        <strong>PDF could not be loaded.</strong>
-        <span>The paper entry remains saved. Attach the file again to restore the viewer.</span>
-      </div>
-    `;
+    if (state.pdfUrl) {
+      setZoomControlsVisible(false);
+      fallbackPdfViewer(state.pdfUrl);
+    } else {
+      els.pdfViewer.classList.remove("is-pdfjs");
+      els.pdfViewer.innerHTML = `
+        <div class="pdf-placeholder">
+          <strong>PDF could not be loaded.</strong>
+          <span>The paper entry remains saved. Attach the file again to restore the viewer.</span>
+        </div>
+      `;
+    }
   }
 }
 
@@ -503,6 +677,7 @@ function openAddDialog() {
   els.formPdfField.classList.remove("hidden");
   setFormMetadataStatus("");
   els.paperDialog.showModal();
+  resetDialogPosition();
   window.setTimeout(() => els.formTitle.focus(), 0);
 }
 
@@ -519,6 +694,7 @@ function openEditDialog(id) {
   els.formAuthors.value = paper.authors || "";
   setFormMetadataStatus("");
   els.paperDialog.showModal();
+  resetDialogPosition();
   window.setTimeout(() => els.formTitle.focus(), 0);
 }
 
@@ -636,6 +812,137 @@ async function populateFormFromPdf(file) {
   }
 }
 
+function pageForSelectionRect(rect) {
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  return [...els.pdfViewer.querySelectorAll(".pdf-page-render")].find((pageEl) => {
+    const pageRect = pageEl.getBoundingClientRect();
+    return centerX >= pageRect.left && centerX <= pageRect.right && centerY >= pageRect.top && centerY <= pageRect.bottom;
+  });
+}
+
+function capturePdfSelection() {
+  window.setTimeout(() => {
+    const paper = selectedPaper();
+    const selection = window.getSelection();
+    if (!paper || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      state.pendingHighlight = null;
+      hideHighlightActions();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!els.pdfViewer.contains(range.commonAncestorContainer)) {
+      state.pendingHighlight = null;
+      hideHighlightActions();
+      return;
+    }
+
+    const rects = [...range.getClientRects()]
+      .map((rect) => {
+        const pageEl = pageForSelectionRect(rect);
+        if (!pageEl) return null;
+        const pageRect = pageEl.getBoundingClientRect();
+        const x = Math.max(0, (rect.left - pageRect.left) / pageRect.width);
+        const y = Math.max(0, (rect.top - pageRect.top) / pageRect.height);
+        const width = Math.min(1 - x, rect.width / pageRect.width);
+        const height = Math.min(1 - y, rect.height / pageRect.height);
+        if (width < 0.004 || height < 0.004) return null;
+        return {
+          page: Number(pageEl.dataset.pageNumber),
+          x,
+          y,
+          width,
+          height,
+        };
+      })
+      .filter(Boolean);
+
+    state.pendingHighlight = rects.length ? { paperId: paper.id, rects } : null;
+    if (!state.pendingHighlight) {
+      hideHighlightActions();
+      return;
+    }
+
+    const anchor = range.getBoundingClientRect();
+    const left = Math.min(window.innerWidth - 124, Math.max(12, anchor.left + anchor.width / 2 - 46));
+    const top = Math.min(window.innerHeight - 48, Math.max(12, anchor.top - 44));
+    els.floatingHighlightBtn.style.left = `${left}px`;
+    els.floatingHighlightBtn.style.top = `${top}px`;
+    els.highlightBtn.classList.remove("hidden");
+    els.floatingHighlightBtn.classList.remove("hidden");
+  }, 0);
+}
+
+function savePendingHighlight() {
+  const paper = selectedPaper();
+  if (!paper || !state.pendingHighlight || state.pendingHighlight.paperId !== paper.id) return;
+
+  const highlight = {
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    rects: state.pendingHighlight.rects,
+  };
+  updatePaper(paper.id, { pdfHighlights: [...(paper.pdfHighlights || []), highlight] }, { render: false });
+  state.pendingHighlight = null;
+  hideHighlightActions();
+  window.getSelection()?.removeAllRanges();
+  renderStoredHighlights(selectedPaper());
+}
+
+async function rerenderCurrentPdf() {
+  const paper = selectedPaper();
+  if (!paper || !state.currentPdfRecord) return;
+  const previousScrollRatio = els.pdfViewer.scrollTop / Math.max(1, els.pdfViewer.scrollHeight - els.pdfViewer.clientHeight);
+  await renderPdfWithPdfJs(state.currentPdfRecord, paper);
+  els.pdfViewer.scrollTop = previousScrollRatio * Math.max(0, els.pdfViewer.scrollHeight - els.pdfViewer.clientHeight);
+}
+
+async function adjustPdfZoom(delta) {
+  state.pdfZoom = Math.min(2, Math.max(0.7, Number((state.pdfZoom + delta).toFixed(2))));
+  updateZoomLabel();
+  await rerenderCurrentPdf();
+}
+
+function resetDialogPosition() {
+  els.paperDialog.style.left = "";
+  els.paperDialog.style.top = "";
+  els.paperDialog.style.margin = "";
+}
+
+function startDialogDrag(event) {
+  if (event.target.closest("button, input, textarea, select, label")) return;
+  const rect = els.paperDialog.getBoundingClientRect();
+  state.dialogDrag = {
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+  };
+  els.paperDialog.classList.add("is-dragging");
+  els.paperDialog.style.margin = "0";
+  els.paperDialog.style.left = `${rect.left}px`;
+  els.paperDialog.style.top = `${rect.top}px`;
+  document.addEventListener("mousemove", dragDialog);
+  document.addEventListener("mouseup", stopDialogDrag);
+}
+
+function dragDialog(event) {
+  if (!state.dialogDrag) return;
+  const rect = els.paperDialog.getBoundingClientRect();
+  const maxLeft = Math.max(0, window.innerWidth - rect.width);
+  const maxTop = Math.max(0, window.innerHeight - rect.height);
+  const left = Math.min(maxLeft, Math.max(0, event.clientX - state.dialogDrag.offsetX));
+  const top = Math.min(maxTop, Math.max(0, event.clientY - state.dialogDrag.offsetY));
+  els.paperDialog.style.left = `${left}px`;
+  els.paperDialog.style.top = `${top}px`;
+}
+
+function stopDialogDrag() {
+  state.dialogDrag = null;
+  els.paperDialog.classList.remove("is-dragging");
+  document.removeEventListener("mousemove", dragDialog);
+  document.removeEventListener("mouseup", stopDialogDrag);
+}
+
 function wireEvents() {
   els.newPaperBtn.addEventListener("click", openAddDialog);
   document.querySelectorAll("[data-open-add]").forEach((button) => {
@@ -644,10 +951,12 @@ function wireEvents() {
   document.querySelectorAll("[data-close-dialog]").forEach((button) => {
     button.addEventListener("click", () => {
       state.editingId = null;
+      stopDialogDrag();
       els.paperDialog.close();
     });
   });
   els.paperForm.addEventListener("submit", createPaperFromForm);
+  els.paperDialog.querySelector(".dialog-header").addEventListener("mousedown", startDialogDrag);
 
   els.searchInput.addEventListener("input", (event) => {
     state.search = event.target.value;
@@ -671,6 +980,14 @@ function wireEvents() {
   });
 
   els.pdfInput.addEventListener("change", attachPdf);
+  els.pdfViewer.addEventListener("mouseup", capturePdfSelection);
+  els.pdfViewer.addEventListener("scroll", hideHighlightActions);
+  els.zoomOutBtn.addEventListener("click", () => adjustPdfZoom(-0.15));
+  els.zoomInBtn.addEventListener("click", () => adjustPdfZoom(0.15));
+  els.highlightBtn.addEventListener("mousedown", (event) => event.preventDefault());
+  els.floatingHighlightBtn.addEventListener("mousedown", (event) => event.preventDefault());
+  els.highlightBtn.addEventListener("click", savePendingHighlight);
+  els.floatingHighlightBtn.addEventListener("click", savePendingHighlight);
 
   window.addEventListener("dragenter", (event) => {
     if (![...event.dataTransfer?.items || []].some((item) => item.kind === "file")) return;
@@ -723,6 +1040,7 @@ function seedIfEmpty() {
       notes: "Start notes as you read. Add page numbers so your PDF and notes stay linked.",
       highlights: "",
       takeaways: "",
+      pdfHighlights: [],
       pdfId: null,
       addedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
