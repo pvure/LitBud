@@ -1,21 +1,52 @@
 # Papers
 
-A local-first reading tracker for research papers.
+Papers is a local-first reading tracker for research papers. It keeps PDFs, notes, categories, and PDF highlights on your own machine.
 
-## Use it
+## Features
 
-For the easiest Mac experience, open the packaged app:
+- Add papers manually or by dragging in PDFs.
+- Extract embedded PDF title, author, and year metadata when available.
+- Read a PDF beside its linked notes document.
+- Highlight selected PDF text and remove highlights by clicking them.
+- Track categories, tags, reading notes, quotes/highlights, and synthesis notes.
+- Search the local library.
+- Export/import full backups with metadata and PDFs.
 
-```text
-dist/mac-arm64/Papers.app
-```
+## Recommended Use
 
-You can drag `Papers.app` into `/Applications` after building it.
+For daily use, build the packaged app for your platform and run it like a normal desktop app.
 
-For the lightweight browser app with durable local files:
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Build the macOS app:
+
+```bash
+npm run pack:mac
+```
+
+Build the Windows x64 app:
+
+```bash
+npm run pack:win
+```
+
+Build outputs are generated in `dist/`. The `dist/` folder is intentionally ignored by git because packaged apps are large generated artifacts.
+
+## Development
+
+Run as an Electron desktop app:
+
+```bash
+npm run desktop
+```
+
+Run as a lightweight local web app:
+
+```bash
 npm start
 ```
 
@@ -25,96 +56,7 @@ Then open:
 http://localhost:4317
 ```
 
-This works in Safari and Chrome. The browser is only the interface; a tiny local server writes your data to normal files.
-
-For the desktop app:
-
-```bash
-npm run desktop
-```
-
-To rebuild the double-clickable macOS app:
-
-```bash
-npm run pack:mac
-```
-
-To build a Windows x64 folder for sharing:
-
-```bash
-npm run pack:win
-```
-
-Then zip and send:
-
-```text
-dist/win-unpacked/
-```
-
-The Windows executable is:
-
-```text
-dist/win-unpacked/Papers.exe
-```
-
-The old browser-only mode still works by opening `index.html`, but browser-only mode stores data in browser storage unless you use Chrome/Edge folder mode.
-
-## Local server storage
-
-The local server stores your long-term library here by default:
-
-```text
-~/Documents/Papers Library/
-```
-
-It writes:
-
-```text
-library.json
-pdfs/
-backups/
-```
-
-`library.json` is written atomically, and the previous version is copied into `backups/` before each save. The newest 100 metadata backups are kept.
-
-To use a different folder:
-
-```bash
-PAPERS_LIBRARY_DIR="/path/to/your/folder" npm start
-```
-
-Use `Export` in the sidebar to make a full manual backup with metadata and PDFs in one JSON file. Use `Import` to restore one.
-
-## Browser folder mode
-
-If you prefer the light browser version, use Chrome or Edge and click `Library folder`. Pick a folder such as:
-
-```text
-~/Documents/Papers Library/
-```
-
-The app will write:
-
-```text
-library.json
-pdfs/
-```
-
-inside that folder. Existing browser papers and PDFs are copied into the folder when you connect it.
-
-Safari and Firefox do not support this folder-writing browser API. In those browsers, the app falls back to browser storage.
-
-What it supports now:
-
-- Add papers to a "want to read" queue.
-- Drag and drop one or more PDFs into the app.
-- Extract embedded PDF title, author, and year metadata when available.
-- Attach a PDF to each paper.
-- Read the PDF and write the linked note document side by side.
-- Select text in the PDF and click `Highlight` to save a highlight. Click an existing highlight to remove it.
-- Track status: want to read, reading, read.
-- Add categories after reading, plus tags, highlights, and synthesis notes.
-- Search and filter the library.
+The local web app works in Safari and Chrome. The browser is only the interface; the local server writes data to files.
 
 ## Storage
 
@@ -124,7 +66,7 @@ The packaged app and local server both use:
 ~/Documents/Papers Library/
 ```
 
-with:
+That folder contains:
 
 ```text
 library.json
@@ -132,8 +74,22 @@ pdfs/
 backups/
 ```
 
-In browser mode without a connected library folder, paper metadata and notes are saved in browser `localStorage`; PDF files are saved in browser `IndexedDB`.
+`library.json` is written atomically. Before each metadata save, the previous version is copied into `backups/`. The newest 100 metadata backups are kept.
 
-PDF metadata parsing is intentionally fast and local. Scanned PDFs and files without embedded title/author fields may still need manual cleanup.
+To use a different folder with the local server:
 
-The highlight viewer uses PDF.js from a CDN. If PDF.js cannot load, the app falls back to the browser's built-in PDF viewer without highlights.
+```bash
+PAPERS_LIBRARY_DIR="/path/to/your/folder" npm start
+```
+
+## Browser-Only Mode
+
+Opening `index.html` directly still works, but browser-only mode stores data in browser storage unless you use Chrome/Edge folder mode.
+
+Chrome and Edge support connecting a real folder from the sidebar via `Library folder`. Safari and Firefox do not support that browser folder-writing API, so use the packaged app or local server mode for durable Safari-compatible storage.
+
+## Notes
+
+PDF metadata parsing is intentionally fast and local. Scanned PDFs and files without embedded title/author/year fields may need manual cleanup.
+
+Packaged builds are not code-signed yet. macOS Gatekeeper or Windows SmartScreen may warn when opening shared builds until signing/notarization is added.
